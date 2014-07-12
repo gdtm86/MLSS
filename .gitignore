@@ -16,3 +16,8 @@ hs_err_pid*
 *.iml
 
 target/
+REEF_LOCAL_RUNTIME/
+
+.settings
+.classpath
+.project
