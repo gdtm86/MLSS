@@ -17,6 +17,8 @@ package com.microsoft.reef.examples.nggroup.bgd;
 
 import javax.inject.Inject;
 
+import com.microsoft.reef.client.REEF;
+import com.microsoft.reef.runtime.common.client.REEFImplementation;
 import org.apache.hadoop.mapred.TextInputFormat;
 
 import com.microsoft.reef.client.DriverConfiguration;
@@ -64,12 +66,11 @@ public class BGDClient {
    *
    * @param runtimeConfiguration the runtime to run on.
    * @param jobName              the name of the job on the runtime.
-   * @return
    * @throws Exception
    */
-  public LauncherStatus run(final Configuration runtimeConfiguration, final String jobName) throws Exception {
+  public void submit(final Configuration runtimeConfiguration, final String jobName) throws Exception {
     final Configuration driverConfiguration = getDriverConfiguration(jobName);
-    return DriverLauncher.getLauncher(runtimeConfiguration).run(driverConfiguration);
+    Tang.Factory.getTang().newInjector(runtimeConfiguration).getInstance(REEF.class).submit(driverConfiguration);
   }
 
   /**
@@ -83,14 +84,15 @@ public class BGDClient {
    */
   public LauncherStatus run(final Configuration runtimeConfiguration, final String jobName, final int timeout) throws Exception {
     final Configuration driverConfiguration = getDriverConfiguration(jobName);
+
     return DriverLauncher.getLauncher(runtimeConfiguration).run(driverConfiguration, timeout);
   }
 
   private final Configuration getDriverConfiguration(final String jobName) {
     return Configurations.merge(
-              getDataLoadConfiguration(jobName),
-              GroupCommService.getConfiguration(),
-              bgdControlParameters.getConfiguration());
+        getDataLoadConfiguration(jobName),
+        GroupCommService.getConfiguration(),
+        bgdControlParameters.getConfiguration());
   }
 
   private Configuration getDataLoadConfiguration(final String jobName) {

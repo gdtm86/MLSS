@@ -24,7 +24,6 @@ import javax.inject.Inject;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 
-import com.microsoft.reef.examples.nggroup.bgd.ControlMessages;
 import com.microsoft.reef.examples.nggroup.bgd.data.Example;
 import com.microsoft.reef.examples.nggroup.bgd.data.parser.Parser;
 import com.microsoft.reef.examples.nggroup.bgd.loss.LossFunction;
@@ -48,13 +47,8 @@ public class SlaveTask implements Task {
 
   private static final Logger LOG = Logger.getLogger(SlaveTask.class.getName());
 
-  /**
-   *
-   */
-  private static final double FAILURE_PROB = 0.001;
-  private final CommunicationGroupClient communicationGroup;
-  private final Broadcast.Receiver<ControlMessages> controlMessageBroadcaster;
-  private final Broadcast.Receiver<Vector> modelBroadcaster;
+  private final Broadcast.Receiver<ControlMessages> controlMessageReceiver;
+  private final Broadcast.Receiver<Vector> modelReceiver;
   private final Reduce.Sender<Pair<Pair<Double, Integer>, Vector>> lossAndGradientReducer;
   private final List<Example> examples = new ArrayList<>();
   private final DataSet<LongWritable, Text> dataSet;
@@ -63,33 +57,32 @@ public class SlaveTask implements Task {
   private Vector model = null;
 
   @Inject
-  public SlaveTask(
-      final GroupCommClient groupCommClient,
-      final DataSet<LongWritable, Text> dataSet,
-      final Parser<String> parser,
-      final LossFunction lossFunction,
-      final StepSizes ts) {
+  public SlaveTask(final GroupCommClient groupCommClient,
+                   final DataSet<LongWritable, Text> dataSet,
+                   final Parser<String> parser,
+                   final LossFunction lossFunction,
+                   final StepSizes ts) {
     this.dataSet = dataSet;
     this.parser = parser;
     this.lossFunction = lossFunction;
-    communicationGroup = groupCommClient.getCommunicationGroup(AllCommunicationGroup.class);
-    controlMessageBroadcaster = communicationGroup.getBroadcastReceiver(ControlMessageBroadcaster.class);
-    modelBroadcaster = communicationGroup.getBroadcastReceiver(ModelBroadcaster.class);
+    final CommunicationGroupClient communicationGroup = groupCommClient.getCommunicationGroup(AllCommunicationGroup.class);
+    controlMessageReceiver = communicationGroup.getBroadcastReceiver(ControlMessageBroadcaster.class);
+    modelReceiver = communicationGroup.getBroadcastReceiver(ModelBroadcaster.class);
     lossAndGradientReducer = communicationGroup.getReduceSender(LossAndGradientReducer.class);
   }
 
   @Override
   public byte[] call(final byte[] memento) throws Exception {
-    boolean stop = false;
-    while (!stop) {
-      final ControlMessages controlMessage = controlMessageBroadcaster.receive();
+    boolean stopped = false;
+    while (!stopped) {
+      final ControlMessages controlMessage = controlMessageReceiver.receive();
       switch (controlMessage) {
         case Stop:
-          stop = true;
+          stopped = true;
           break;
 
         case ComputeGradientWithModel:
-          this.model = modelBroadcaster.receive();
+          this.model = modelReceiver.receive();
           lossAndGradientReducer.send(computeLossAndGradient());
           break;
 
@@ -114,7 +107,7 @@ public class SlaveTask implements Task {
       final double f = example.predict(model);
 
       final double g = this.lossFunction.computeGradient(example.getLabel(), f);
-      example.addGradient(gradient, g);
+      example.addToGradient(gradient, g);
       loss += this.lossFunction.computeLoss(example.getLabel(), f);
     }
     return new Pair<>(new Pair<>(loss, examples.size()), gradient);
@@ -129,7 +122,7 @@ public class SlaveTask implements Task {
     for (final Pair<LongWritable, Text> examplePair : dataSet) {
       final Example example = parser.parse(examplePair.second.toString());
       examples.add(example);
-      if(++i % 2000 == 0) {
+      if (++i % 2000 == 0) {
         LOG.info("Done parsing " + i + " lines");
       }
     }

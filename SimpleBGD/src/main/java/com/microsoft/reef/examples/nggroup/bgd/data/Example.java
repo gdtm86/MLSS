@@ -48,6 +48,6 @@ public interface Example extends Serializable {
    * @param gradientVector
    * @param gradient
    */
-  public abstract void addGradient(Vector gradientVector, double gradient);
+  public abstract void addToGradient(Vector gradientVector, double gradient);
 
 }

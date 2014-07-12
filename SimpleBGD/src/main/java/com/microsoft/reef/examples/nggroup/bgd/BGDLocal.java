@@ -24,13 +24,21 @@ import com.microsoft.tang.Configuration;
  */
 public class BGDLocal {
   private static final String NUM_LOCAL_THREADS = "20";
+  private static final int MINUTES = 60 * 1000;  // ms
+  private static final int TIMEOUT = 2 * MINUTES;
 
   public static void main(final String[] args) throws Exception {
+
     final BGDClient bgdClient = BGDClient.fromCommandLine(args);
+
     final Configuration runtimeConfiguration = LocalRuntimeConfiguration.CONF
         .set(LocalRuntimeConfiguration.NUMBER_OF_THREADS, NUM_LOCAL_THREADS)
         .build();
-    final LauncherStatus result = bgdClient.run(runtimeConfiguration, System.getProperty("user.name") + "-" + "SimpleBGDLocal");
-    System.out.println("Result: " + result.toString());
+
+    final String jobName = System.getProperty("user.name") + "-" + "SimpleBGDLocal";
+
+    final LauncherStatus status = bgdClient.run(runtimeConfiguration, jobName, TIMEOUT);
+
+    System.out.println("Result: " + status);
   }
 }

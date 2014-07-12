@@ -56,7 +56,7 @@ public final class SparseExample implements Example {
   }
 
   @Override
-  public void addGradient(final Vector gradientVector, final double gradient) {
+  public void addToGradient(final Vector gradientVector, final double gradient) {
     for (int i = 0; i < this.indices.length; ++i) {
       final int index = this.indices[i];
       final double contribution = gradient * this.values[i];
