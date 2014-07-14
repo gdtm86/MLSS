@@ -70,14 +70,12 @@ public class MasterTask implements Task {
   @Override
   public byte[] call(final byte[] memento) throws Exception {
 
-    double gradientNorm = Double.MAX_VALUE;
+    final double gradientNorm = Double.MAX_VALUE;
     for (int iteration = 1; !converged(iteration, gradientNorm); ++iteration) {
       try (final Timer t = new Timer("Current Iteration(" + (iteration) + ")")) {
-        final Vector gradient = evaluateCurrentModel();
-        gradientNorm = gradient.norm2();
-        final Vector descentDirection = getDescentDirection(gradient);
-
-        updateModel(descentDirection);
+        final Pair<Double, Vector> lossAndGrad = computeLossAndGradient();
+        losses.add(lossAndGrad.first);
+        updateModel(lossAndGrad.second);
       }
     }
     System.out.println("Stop");
@@ -89,33 +87,14 @@ public class MasterTask implements Task {
     return lossCodec.encode(losses);
   }
 
-  private Vector evaluateCurrentModel() throws NetworkException, InterruptedException {
-    final Pair<Pair<Double, Integer>, Vector> lossAndGradient = computeLossAndGradient();
-
-    final Vector gradient = regularizeLossAndGradient(lossAndGradient);
-    return gradient;
-  }
-
-  private void updateModel(final Vector descentDirection) {
+  private void updateModel(final Vector gradient) {
     try (Timer t = new Timer("UpdateModel")) {
-      model.multAdd(eta, descentDirection);
+      model.scale(1-lambda * eta);
+      model.multAdd(-eta, gradient);
       eta *= 0.99;
     }
 
     System.out.println("New Model: " + model);
-  }
-
-
-  private Vector regularizeLossAndGradient(final Pair<Pair<Double, Integer>, Vector> lossAndGradient) {
-    Vector gradient;
-    try (Timer t = new Timer("Regularize(Loss) + Regularize(Gradient)")) {
-      final double loss = regularizeLoss(lossAndGradient.first.first, lossAndGradient.first.second, model);
-      System.out.println("RegLoss: " + loss);
-      gradient = regularizeGradient(lossAndGradient.second, lossAndGradient.first.second, model);
-      System.out.println("RegGradient: " + gradient);
-      losses.add(loss);
-    }
-    return gradient;
   }
 
   /**
@@ -127,44 +106,24 @@ public class MasterTask implements Task {
    * @throws InterruptedException
    * @throws NetworkException
    */
-  private Pair<Pair<Double, Integer>, Vector> computeLossAndGradient() throws NetworkException, InterruptedException {
-    final Pair<Pair<Double, Integer>, Vector> lossAndGradient;
+  private Pair<Double, Vector> computeLossAndGradient() throws NetworkException, InterruptedException {
     try (Timer t = new Timer("Broadcast(Model) + Reduce(LossAndGradient)")) {
       System.out.println("ComputeGradientWithModel");
       controlMessageSender.send(ControlMessages.ComputeGradientWithModel);
       modelSender.send(model);
-      lossAndGradient = lossAndGradientReceiver.reduce();
-      System.out.println("Loss: " + lossAndGradient.first.first + " #ex: " + lossAndGradient.first.second);
-      System.out.println("Gradient: " + lossAndGradient.second + " #ex: " + lossAndGradient.first.second);
+      final Pair<Pair<Double, Integer>, Vector> lossAndGradient = lossAndGradientReceiver.reduce();
+
+      final int numExamples = lossAndGradient.first.second;
+      System.out.println("#Examples: " + numExamples);
+      final double lossPerExample = lossAndGradient.first.first / numExamples;
+      System.out.println("Loss: " + lossPerExample);
+      final double objFunc = ((lambda / 2) * model.norm2Sqr()) + lossPerExample;
+      System.out.println("Objective Func Value: " + objFunc);
+      final Vector gradient = lossAndGradient.second;
+      gradient.scale(1.0/numExamples);
+      System.out.println("Gradient: " + gradient);
+      return new Pair<>(objFunc, gradient);
     }
-    return lossAndGradient;
-  }
-
-  /**
-   * Adds regularization to the gradient and scales it by number of examples
-   *
-   * @param second
-   * @param model
-   * @param second2
-   * @return
-   */
-  private Vector regularizeGradient(final Vector gradient, final int numEx, final Vector model) {
-    gradient.scale(1.0 / numEx);
-    gradient.multAdd(lambda, model);
-    return gradient;
-  }
-
-  /**
-   * @param first
-   * @param model
-   * @return
-   */
-  private double regularizeLoss(final double loss, final int numEx, final Vector model) {
-    return regularizeLoss(loss, numEx, model.norm2Sqr());
-  }
-
-  private double regularizeLoss(final double loss, final int numEx, final double modelNormSqr) {
-    return loss / numEx + ((lambda / 2) * modelNormSqr);
   }
 
   /**
@@ -174,15 +133,4 @@ public class MasterTask implements Task {
   private boolean converged(final int iters, final double gradNorm) {
     return iters >= maxIters || Math.abs(gradNorm) <= 1e-3;
   }
-
-  /**
-   * @param gradient
-   * @return
-   */
-  private Vector getDescentDirection(final Vector gradient) {
-    gradient.scale(-1);
-    System.out.println("DescentDirection: " + gradient);
-    return gradient;
-  }
-
 }

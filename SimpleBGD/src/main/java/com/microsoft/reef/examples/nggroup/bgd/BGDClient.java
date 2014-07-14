@@ -17,15 +17,13 @@ package com.microsoft.reef.examples.nggroup.bgd;
 
 import javax.inject.Inject;
 
-import com.microsoft.reef.client.REEF;
-import com.microsoft.reef.runtime.common.client.REEFImplementation;
 import org.apache.hadoop.mapred.TextInputFormat;
 
 import com.microsoft.reef.client.DriverConfiguration;
 import com.microsoft.reef.client.DriverLauncher;
 import com.microsoft.reef.client.LauncherStatus;
+import com.microsoft.reef.client.REEF;
 import com.microsoft.reef.driver.evaluator.EvaluatorRequest;
-import com.microsoft.reef.examples.nggroup.bgd.BGDControlParameters;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.EvaluatorMemory;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.InputDir;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.NumSplits;
