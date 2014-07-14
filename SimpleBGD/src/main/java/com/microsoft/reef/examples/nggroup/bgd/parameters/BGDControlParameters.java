@@ -13,20 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.microsoft.reef.examples.nggroup.bgd;
+package com.microsoft.reef.examples.nggroup.bgd.parameters;
 
 import javax.inject.Inject;
 
 import com.microsoft.reef.examples.nggroup.bgd.loss.LogisticLossFunction;
 import com.microsoft.reef.examples.nggroup.bgd.loss.LossFunction;
 import com.microsoft.reef.examples.nggroup.bgd.loss.WeightedLogisticLossFunction;
-import com.microsoft.reef.examples.nggroup.bgd.parameters.EnableRampup;
-import com.microsoft.reef.examples.nggroup.bgd.parameters.Eps;
-import com.microsoft.reef.examples.nggroup.bgd.parameters.Eta;
-import com.microsoft.reef.examples.nggroup.bgd.parameters.Iterations;
-import com.microsoft.reef.examples.nggroup.bgd.parameters.Lambda;
-import com.microsoft.reef.examples.nggroup.bgd.parameters.MinParts;
-import com.microsoft.reef.examples.nggroup.bgd.parameters.ModelDimensions;
 import com.microsoft.tang.Configuration;
 import com.microsoft.tang.Tang;
 import com.microsoft.tang.annotations.Parameter;
@@ -44,8 +37,8 @@ public class BGDControlParameters {
   private final int minParts;
   private final boolean rampup;
 
-  private final Class<? extends LossFunction> lossFunction = LogisticLossFunction.class;
   private final double eta;
+  private final BGDLossType lossType;
 
   @Inject
   public BGDControlParameters(
@@ -55,7 +48,8 @@ public class BGDControlParameters {
           @Parameter(Eta.class) final double eta,
           @Parameter(Iterations.class) final int iters,
           @Parameter(EnableRampup.class) final boolean rampup,
-          @Parameter(MinParts.class) final int minParts) {
+          @Parameter(MinParts.class) final int minParts,
+          final BGDLossType lossType) {
             this.dimensions = dimensions;
             this.lambda = lambda;
             this.eps = eps;
@@ -63,6 +57,7 @@ public class BGDControlParameters {
             this.iters = iters;
             this.rampup = rampup;
             this.minParts = minParts;
+            this.lossType = lossType;
   }
 
   public Configuration getConfiguration() {
@@ -85,6 +80,7 @@ public class BGDControlParameters {
     commandLine.registerShortNameOfClass(Iterations.class);
     commandLine.registerShortNameOfClass(EnableRampup.class);
     commandLine.registerShortNameOfClass(MinParts.class);
+    commandLine.registerShortNameOfClass(LossFunctionType.class);
   }
 
   public int getDimensions() {
@@ -116,7 +112,7 @@ public class BGDControlParameters {
   }
 
   public Class<? extends LossFunction> getLossFunction() {
-    return lossFunction;
+    return lossType.getLossFunction();
   }
 
 

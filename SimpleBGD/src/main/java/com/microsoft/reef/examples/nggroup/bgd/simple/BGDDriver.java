@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.microsoft.reef.examples.nggroup.bgd;
+package com.microsoft.reef.examples.nggroup.bgd.simple;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +36,9 @@ import com.microsoft.reef.examples.nggroup.bgd.operatornames.ControlMessageBroad
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.LossAndGradientReducer;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.ModelBroadcaster;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.AllCommunicationGroup;
+import com.microsoft.reef.examples.nggroup.bgd.parameters.BGDControlParameters;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.ModelDimensions;
+import com.microsoft.reef.examples.nggroup.bgd.utils.LossAndGradientReduceFunction;
 import com.microsoft.reef.io.data.loading.api.DataLoadingService;
 import com.microsoft.reef.io.network.nggroup.api.CommunicationGroupDriver;
 import com.microsoft.reef.io.network.nggroup.api.GroupCommDriver;
@@ -69,6 +71,7 @@ public class BGDDriver {
   private final AtomicInteger slaveIds = new AtomicInteger(0);
   private final Codec<ArrayList<Double>> lossCodec = new SerializableCodec<ArrayList<Double>>();
   private final BGDControlParameters bgdControlParameters;
+
   private String communicationsGroupMasterContextId;
 
 
@@ -147,8 +150,10 @@ public class BGDDriver {
       final Configuration partialTaskConfiguration;
       if (activeContext.getId().equals(communicationsGroupMasterContextId) && !masterTaskSubmitted()) {
         partialTaskConfiguration = getMasterTaskConfiguration();
+        LOG.info("Submitting MasterTask conf");
       } else {
         partialTaskConfiguration = getSlaveTaskConfiguration(getSlaveId(activeContext));
+        LOG.info("Submitting SlaveTask conf");
       }
 
       communicationsGroup.addTask(partialTaskConfiguration);

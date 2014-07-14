@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.microsoft.reef.examples.nggroup.bgd;
+package com.microsoft.reef.examples.nggroup.bgd.utils;
 
 import com.microsoft.reef.examples.nggroup.bgd.math.DenseVector;
 import com.microsoft.reef.examples.nggroup.bgd.math.Vector;
@@ -21,34 +21,28 @@ import com.microsoft.reef.io.network.group.operators.Reduce.ReduceFunction;
 import com.microsoft.reef.io.network.util.Utils.Pair;
 
 import javax.inject.Inject;
-import java.util.logging.Logger;
 
 /**
- * Pair<LOSS, GRADIENT> with LOSS: PAIR<SUM, EXAMPLE_COUNT>
+ *
  */
-public class LossAndGradientReduceFunction implements ReduceFunction<Pair<Pair<Double, Integer>, Vector>> {
-
-  private static final Logger LOG = Logger
-      .getLogger(LossAndGradientReduceFunction.class.getName());
+public class LineSearchReduceFunction implements ReduceFunction<Pair<Vector, Integer>> {
 
   @Inject
-  public LossAndGradientReduceFunction() {
+  public LineSearchReduceFunction() {
   }
 
   @Override
-  public Pair<Pair<Double, Integer>, Vector> apply(final Iterable<Pair<Pair<Double, Integer>, Vector>> lags) {
-    double lossSum = 0.0;
+  public Pair<Vector, Integer> apply(final Iterable<Pair<Vector, Integer>> evals) {
+    Vector combinedEvaluations = null;
     int numEx = 0;
-    Vector combinedGradient = null;
-    for (final Pair<Pair<Double, Integer>, Vector> lag : lags) {
-      if (combinedGradient == null) {
-        combinedGradient = new DenseVector(lag.second.size());
+    for (final Pair<Vector, Integer> eval : evals) {
+      if (combinedEvaluations == null) {
+        combinedEvaluations = new DenseVector(eval.first.size());
       }
-      lossSum += lag.first.first;
-      numEx += lag.first.second;
-      combinedGradient.add(lag.second);
+      combinedEvaluations.add(eval.first);
+      numEx += eval.second;
     }
-    return new Pair<>(new Pair<>(lossSum, numEx), combinedGradient);
+    return new Pair<>(combinedEvaluations, numEx);
   }
 
 }

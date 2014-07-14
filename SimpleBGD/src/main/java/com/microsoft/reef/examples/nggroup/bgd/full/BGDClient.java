@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.microsoft.reef.examples.nggroup.bgd;
+package com.microsoft.reef.examples.nggroup.bgd.full;
 
 import javax.inject.Inject;
 
@@ -24,6 +24,7 @@ import com.microsoft.reef.client.DriverLauncher;
 import com.microsoft.reef.client.LauncherStatus;
 import com.microsoft.reef.client.REEF;
 import com.microsoft.reef.driver.evaluator.EvaluatorRequest;
+import com.microsoft.reef.examples.nggroup.bgd.parameters.BGDControlParameters;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.EvaluatorMemory;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.InputDir;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.NumSplits;
@@ -64,7 +65,7 @@ public class BGDClient {
    *
    * @param runtimeConfiguration the runtime to run on.
    * @param jobName              the name of the job on the runtime.
-   * @throws Exception
+   * @return
    */
   public void submit(final Configuration runtimeConfiguration, final String jobName) throws Exception {
     final Configuration driverConfiguration = getDriverConfiguration(jobName);
@@ -107,6 +108,8 @@ public class BGDClient {
         .setDriverConfigurationModule(EnvironmentUtils
             .addClasspath(DriverConfiguration.CONF, DriverConfiguration.GLOBAL_LIBRARIES)
             .set(DriverConfiguration.ON_CONTEXT_ACTIVE, BGDDriver.ContextActiveHandler.class)
+            .set(DriverConfiguration.ON_TASK_RUNNING, BGDDriver.TaskRunningHandler.class)
+            .set(DriverConfiguration.ON_TASK_FAILED, BGDDriver.TaskFailedHandler.class)
             .set(DriverConfiguration.ON_TASK_COMPLETED, BGDDriver.TaskCompletedHandler.class)
             .set(DriverConfiguration.DRIVER_IDENTIFIER, jobName))
         .build();
@@ -124,6 +127,5 @@ public class BGDClient {
     commandLine.processCommandLine(args);
     return Tang.Factory.getTang().newInjector(configurationBuilder.build()).getInstance(BGDClient.class);
   }
-
 
 }
