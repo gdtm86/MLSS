@@ -21,3 +21,4 @@ REEF_LOCAL_RUNTIME/
 .settings
 .classpath
 .project
+application_*
