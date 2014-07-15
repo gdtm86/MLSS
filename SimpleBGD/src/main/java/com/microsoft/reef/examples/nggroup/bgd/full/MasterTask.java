@@ -99,25 +99,16 @@ public class MasterTask implements Task {
   @Override
   public byte[] call(final byte[] memento) throws Exception {
 
+    double gradientNorm = Double.MAX_VALUE;
+    for (int iteration = 1; !converged(iteration, gradientNorm); ++iteration) {
+      try(Timer t = new Timer("Current Iteration(" + (iteration) + ")")) {
+        final Pair<Double,Vector> lossAndGradient = computeLossAndGradient();
+        losses.add(lossAndGradient.first);
+        final Vector descentDirection = getDescentDirection(lossAndGradient.second);
 
-    Vector gradient;
-    try(Timer t = new Timer("Startup(including dataload) and Evaluation of initial model")) {
-      gradient = evaluateCurrentModel();
-    }
+        updateModel(descentDirection);
 
-    int iters = 1;
-    while (!converged(iters, gradient.norm2())) {
-      try(Timer t = new Timer("Current Iteration(" + (iters) + ")")) {
-
-        final Vector descentDirection = getDescentDirection(gradient);
-
-        final Pair<Vector, Integer> lineSearchEvals = lineSearch(descentDirection);
-
-        updateModel(descentDirection, lineSearchEvals);
-
-        gradient = evaluateCurrentModel();
-
-        ++iters;
+        gradientNorm = descentDirection.norm2();
       }
     }
     System.out.println("Stop");
@@ -129,25 +120,18 @@ public class MasterTask implements Task {
     return lossCodec.encode(losses);
   }
 
-  private Vector evaluateCurrentModel() throws NetworkException, InterruptedException {
-    final Pair<Pair<Double, Integer>, Vector> lossAndGradient = computeLossAndGradient();
-
-    final Vector gradient = regularizeLossAndGradient(lossAndGradient);
-    return gradient;
-  }
-
-  private void updateModel(final Vector descentDirection, final Pair<Vector, Integer> lineSearchEvals) {
+  private void updateModel(final Vector descentDirection) throws NetworkException, InterruptedException {
     try(Timer t = new Timer("GetDescentDirection + FindMinEta + UpdateModel")) {
+      final Vector lineSearchEvals = lineSearch(descentDirection);
       minEta = findMinEta(model, descentDirection, lineSearchEvals);
-      descentDirection.scale(minEta);
-      model.add(descentDirection);
+      model.multAdd(minEta, descentDirection);
     }
 
     System.out.println("New Model: " + model);
   }
 
-  private Pair<Vector, Integer> lineSearch(final Vector descentDirection) throws NetworkException, InterruptedException {
-    Pair<Vector, Integer> lineSearchEvals;
+  private Vector lineSearch(final Vector descentDirection) throws NetworkException, InterruptedException {
+    Vector lineSearchResults;
     do {
       try (Timer t = new Timer("LineSearch - Broadcast("
               + (sendModel ? "ModelAndDescentDirection" : "DescentDirection") + ") + Reduce(LossEvalsInLineSearch)")) {
@@ -160,13 +144,17 @@ public class MasterTask implements Task {
           controlMessageBroadcaster.send(ControlMessages.DoLineSearch);
           descentDriectionBroadcaster.send(descentDirection);
         }
-        lineSearchEvals = lineSearchEvaluationsReducer.reduce();
-        System.out.println("LineSearchEvals: " + lineSearchEvals.first + " #ex: " + lineSearchEvals.second);
+        final Pair<Vector, Integer> lineSearchEvals = lineSearchEvaluationsReducer.reduce();
+        final int numExamples = lineSearchEvals.second;
+        System.out.println("#Examples: " + numExamples);
+        lineSearchResults = lineSearchEvals.first;
+        lineSearchResults.scale(1.0/numExamples);
+        System.out.println("LineSearchEvals: " + lineSearchResults);
       }
 
       sendModel = chkAndUpdate();
     } while (!ignoreAndContinue && sendModel);
-    return lineSearchEvals;
+    return lineSearchResults;
   }
 
   private Vector regularizeLossAndGradient(final Pair<Pair<Double, Integer>, Vector> lossAndGradient) {
@@ -190,8 +178,8 @@ public class MasterTask implements Task {
    * @throws InterruptedException
    * @throws NetworkException
    */
-  private Pair<Pair<Double,Integer>,Vector> computeLossAndGradient() throws NetworkException, InterruptedException {
-    Pair<Pair<Double, Integer>, Vector> lossAndGradient = null;
+  private Pair<Double,Vector> computeLossAndGradient() throws NetworkException, InterruptedException {
+    Pair<Double,Vector> returnValue = null;
     do {
       try(Timer t = new Timer("Broadcast(" + (sendModel ? "Model" : "MinEta") + ") + Reduce(LossAndGradient)")) {
         if (sendModel) {
@@ -203,13 +191,21 @@ public class MasterTask implements Task {
           controlMessageBroadcaster.send(ControlMessages.ComputeGradientWithMinEta);
           minEtaBroadcaster.send(minEta);
         }
-        lossAndGradient = lossAndGradientReducer.reduce();
-        System.out.println("Loss: " + lossAndGradient.first.first + " #ex: " + lossAndGradient.first.second);
-        System.out.println("Gradient: " + lossAndGradient.second + " #ex: " + lossAndGradient.first.second);
+        final Pair<Pair<Double, Integer>, Vector> lossAndGradient = lossAndGradientReducer.reduce();
+        final int numExamples = lossAndGradient.first.second;
+        System.out.println("#Examples: " + numExamples);
+        final double lossPerExample = lossAndGradient.first.first / numExamples;
+        System.out.println("Loss: " + lossPerExample);
+        final double objFunc = ((lambda / 2) * model.norm2Sqr()) + lossPerExample;
+        System.out.println("Objective Func Value: " + objFunc);
+        final Vector gradient = lossAndGradient.second;
+        gradient.scale(1.0/numExamples);
+        System.out.println("Gradient: " + gradient);
+        returnValue = new Pair<>(objFunc, gradient);
       }
       sendModel = chkAndUpdate();
     } while (!ignoreAndContinue && sendModel);
-    return lossAndGradient;
+    return returnValue;
   }
 
   /**
@@ -270,7 +266,7 @@ public class MasterTask implements Task {
    * @param lineSearchEvals
    * @return
    */
-  private double findMinEta(final Vector model, final Vector descentDir, final Pair<Vector, Integer> lineSearchEvals) {
+  private double findMinEta(final Vector model, final Vector descentDir, final Vector lineSearchEvals) {
     final double wNormSqr = model.norm2Sqr();
     final double dNormSqr = descentDir.norm2Sqr();
     final double wDotd = model.dot(descentDir);
@@ -278,12 +274,12 @@ public class MasterTask implements Task {
     int i = 0;
     for (final double eta : t) {
       final double modelNormSqr = wNormSqr + (eta * eta) * dNormSqr + 2 * eta * wDotd;
-      final double loss = regularizeLoss(lineSearchEvals.first.get(i), lineSearchEvals.second, modelNormSqr);
-      lineSearchEvals.first.set(i, loss);
+      final double loss = lineSearchEvals.get(i) + ((lambda / 2) * modelNormSqr);
+      lineSearchEvals.set(i, loss);
       ++i;
     }
-    System.out.println("Regularized LineSearchEvals: " + lineSearchEvals.first);
-    final Tuple<Integer, Double> minTup = lineSearchEvals.first.min();
+    System.out.println("Regularized LineSearchEvals: " + lineSearchEvals);
+    final Tuple<Integer, Double> minTup = lineSearchEvals.min();
     System.out.println("MinTup: " + minTup);
     final double minT = t[minTup.getKey()];
     System.out.println("MinT: " + minT);
@@ -295,6 +291,7 @@ public class MasterTask implements Task {
    * @return
    */
   private Vector getDescentDirection(final Vector gradient) {
+    gradient.multAdd(lambda, model);
     gradient.scale(-1);
     System.out.println("DescentDirection: " + gradient);
     return gradient;

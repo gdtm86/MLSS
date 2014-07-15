@@ -71,12 +71,14 @@ public class MasterTask implements Task {
   @Override
   public byte[] call(final byte[] memento) throws Exception {
 
-    final double gradientNorm = Double.MAX_VALUE;
+    double gradientNorm = Double.MAX_VALUE;
     for (int iteration = 1; !converged(iteration, gradientNorm); ++iteration) {
       try (final Timer t = new Timer("Current Iteration(" + (iteration) + ")")) {
         final Pair<Double, Vector> lossAndGrad = computeLossAndGradient();
         losses.add(lossAndGrad.first);
-        updateModel(lossAndGrad.second);
+        final Vector gradient = lossAndGrad.second;
+        updateModel(gradient);
+        gradientNorm = gradient.norm2();
       }
     }
     System.out.println("Stop");

@@ -36,7 +36,6 @@ import com.microsoft.reef.evaluator.context.parameters.ContextIdentifier;
 import com.microsoft.reef.examples.nggroup.bgd.data.parser.Parser;
 import com.microsoft.reef.examples.nggroup.bgd.data.parser.SVMLightParser;
 import com.microsoft.reef.examples.nggroup.bgd.loss.LossFunction;
-import com.microsoft.reef.examples.nggroup.bgd.math.Vector;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.ControlMessageBroadcaster;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.DescentDirectionBroadcaster;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.LineSearchEvaluationsReducer;
@@ -47,16 +46,13 @@ import com.microsoft.reef.examples.nggroup.bgd.operatornames.ModelBroadcaster;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.AllCommunicationGroup;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.BGDControlParameters;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.ModelDimensions;
-import com.microsoft.reef.examples.nggroup.bgd.simple.MasterTask;
 import com.microsoft.reef.examples.nggroup.bgd.utils.LineSearchReduceFunction;
 import com.microsoft.reef.examples.nggroup.bgd.utils.LossAndGradientReduceFunction;
 import com.microsoft.reef.io.data.loading.api.DataLoadingService;
-import com.microsoft.reef.io.network.group.operators.Reduce.ReduceFunction;
 import com.microsoft.reef.io.network.nggroup.api.CommunicationGroupDriver;
 import com.microsoft.reef.io.network.nggroup.api.GroupCommDriver;
 import com.microsoft.reef.io.network.nggroup.impl.config.BroadcastOperatorSpec;
 import com.microsoft.reef.io.network.nggroup.impl.config.ReduceOperatorSpec;
-import com.microsoft.reef.io.network.util.Utils.Pair;
 import com.microsoft.reef.io.serialization.Codec;
 import com.microsoft.reef.io.serialization.SerializableCodec;
 import com.microsoft.reef.poison.PoisonedConfiguration;
@@ -66,7 +62,6 @@ import com.microsoft.tang.Injector;
 import com.microsoft.tang.Tang;
 import com.microsoft.tang.annotations.Unit;
 import com.microsoft.tang.exceptions.InjectionException;
-import com.microsoft.tang.formats.ConfigurationSerializer;
 import com.microsoft.wake.EventHandler;
 
 /**
@@ -249,10 +244,21 @@ public class BGDDriver {
       LOG.info("Got failed Task " + failedTaskId);
 
       synchronized (runningTasks) {
-        if(!jobCompleted(failedTaskId)) {
-          runningTasks.remove(failedTaskId);
+        final RunningTask rTask = runningTasks.remove(failedTaskId);
+        if (jobComplete.get()) {
+          LOG.info("Job has completed. Not resubmitting");
+          if (rTask != null) {
+            LOG.info("Closing activecontext");
+            rTask.getActiveContext().close();
+          }
+          else {
+            LOG.info("Master must have closed my context");
+          }
+          return;
+
         }
       }
+
       final ActiveContext activeContext = failedTask.getActiveContext().get();
       final Configuration partialTaskConf = getSlaveTaskConfiguration(failedTaskId);
       //Do not add the task back
@@ -260,23 +266,6 @@ public class BGDDriver {
       final Configuration taskConf = groupCommDriver.getTaskConfiguration(partialTaskConf);
       LOG.info("Submitting SlaveTask conf");
       activeContext.submitTask(taskConf);
-    }
-
-    private boolean jobCompleted(final String failedTaskId) {
-      if (jobComplete.get()) {
-        LOG.info("Job has completed. Not resubmitting");
-        final RunningTask rTask = runningTasks.remove(failedTaskId);
-        if (rTask != null) {
-          LOG.info("Closing activecontext");
-          rTask.getActiveContext().close();
-        }
-        else {
-          LOG.info("Master must have closed my context");
-        }
-        return true;
-      } else {
-        return false;
-      }
     }
   }
 
@@ -292,7 +281,7 @@ public class BGDDriver {
           System.out.println(loss);
         }
       }
-      LOG.log(Level.FINEST, "Releasing All Contexts");
+      LOG.log(Level.FINEST, "Releasing Context(s)");
       synchronized (runningTasks) {
         LOG.info("Acquired lock on runningTasks. Removing " + task.getId());
         final RunningTask rTask = runningTasks.remove(task.getId());
@@ -300,7 +289,7 @@ public class BGDDriver {
           LOG.info("Closing active context");
           task.getActiveContext().close();
         } else {
-          LOG.info("Master must have closed my activ context");
+          LOG.info("Master must have closed my active context");
         }
         if (task.getId().equals(MASTER_TASK)) {
           jobComplete.set(true);
