@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.microsoft.reef.examples.nggroup.bgd.full;
+package com.microsoft.reef.examples.nggroup.bgd.simplelinesearch;
 
 import com.microsoft.reef.runtime.hdinsight.client.UnsafeHDInsightRuntimeConfiguration;
 import com.microsoft.tang.Configuration;
@@ -25,6 +25,6 @@ public class BGDHDI {
   public static void main(final String[] args) throws Exception {
     final BGDClient bgdClient = BGDClient.fromCommandLine(args);
     final Configuration runtimeConfiguration = UnsafeHDInsightRuntimeConfiguration.fromEnvironment();
-    bgdClient.submit(runtimeConfiguration, System.getProperty("user.name") + "-" + "ResourceAwareBGDHDI");
+    bgdClient.submit(runtimeConfiguration, System.getProperty("user.name") + "-" + "SimpleBGDHDILineSearch");
   }
 }

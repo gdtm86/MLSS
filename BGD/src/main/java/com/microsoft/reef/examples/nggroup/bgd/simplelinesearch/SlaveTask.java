@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.microsoft.reef.examples.nggroup.bgd.simple;
+package com.microsoft.reef.examples.nggroup.bgd.simplelinesearch;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,10 +30,15 @@ import com.microsoft.reef.examples.nggroup.bgd.loss.LossFunction;
 import com.microsoft.reef.examples.nggroup.bgd.math.DenseVector;
 import com.microsoft.reef.examples.nggroup.bgd.math.Vector;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.ControlMessageBroadcaster;
+import com.microsoft.reef.examples.nggroup.bgd.operatornames.DescentDirectionBroadcaster;
+import com.microsoft.reef.examples.nggroup.bgd.operatornames.LineSearchEvaluationsReducer;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.LossAndGradientReducer;
+import com.microsoft.reef.examples.nggroup.bgd.operatornames.MinEtaBroadcaster;
+import com.microsoft.reef.examples.nggroup.bgd.operatornames.ModelAndDescentDirectionBroadcaster;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.ModelBroadcaster;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.AllCommunicationGroup;
 import com.microsoft.reef.examples.nggroup.bgd.utils.ControlMessages;
+import com.microsoft.reef.examples.nggroup.bgd.utils.StepSizes;
 import com.microsoft.reef.io.data.loading.api.DataSet;
 import com.microsoft.reef.io.network.group.operators.Broadcast;
 import com.microsoft.reef.io.network.group.operators.Reduce;
@@ -49,42 +54,69 @@ public class SlaveTask implements Task {
 
   private static final Logger LOG = Logger.getLogger(SlaveTask.class.getName());
 
-  private final Broadcast.Receiver<ControlMessages> controlMessageReceiver;
-  private final Broadcast.Receiver<Vector> modelReceiver;
+  private final CommunicationGroupClient communicationGroup;
+  private final Broadcast.Receiver<ControlMessages> controlMessageBroadcaster;
+  private final Broadcast.Receiver<Vector> modelBroadcaster;
   private final Reduce.Sender<Pair<Pair<Double, Integer>, Vector>> lossAndGradientReducer;
+  private final Broadcast.Receiver<Vector> descentDirectionBroadcaster;
+  private final Reduce.Sender<Pair<Vector, Integer>> lineSearchEvaluationsReducer;
+  private final Broadcast.Receiver<Double> minEtaBroadcaster;
   private final List<Example> examples = new ArrayList<>();
   private final DataSet<LongWritable, Text> dataSet;
   private final Parser<String> parser;
   private final LossFunction lossFunction;
+  private final StepSizes ts;
+
   private Vector model = null;
+  private Vector descentDirection = null;
 
   @Inject
-  public SlaveTask(final GroupCommClient groupCommClient,
-                   final DataSet<LongWritable, Text> dataSet,
-                   final Parser<String> parser,
-                   final LossFunction lossFunction) {
+  public SlaveTask(
+      final GroupCommClient groupCommClient,
+      final DataSet<LongWritable, Text> dataSet,
+      final Parser<String> parser,
+      final LossFunction lossFunction,
+      final StepSizes ts) {
     this.dataSet = dataSet;
     this.parser = parser;
     this.lossFunction = lossFunction;
-    final CommunicationGroupClient communicationGroup = groupCommClient.getCommunicationGroup(AllCommunicationGroup.class);
-    controlMessageReceiver = communicationGroup.getBroadcastReceiver(ControlMessageBroadcaster.class);
-    modelReceiver = communicationGroup.getBroadcastReceiver(ModelBroadcaster.class);
-    lossAndGradientReducer = communicationGroup.getReduceSender(LossAndGradientReducer.class);
+    this.ts = ts;
+    communicationGroup = groupCommClient.getCommunicationGroup(AllCommunicationGroup.class);
+    this.controlMessageBroadcaster = communicationGroup.getBroadcastReceiver(ControlMessageBroadcaster.class);
+    this.modelBroadcaster = communicationGroup.getBroadcastReceiver(ModelBroadcaster.class);
+    this.lossAndGradientReducer = communicationGroup.getReduceSender(LossAndGradientReducer.class);
+    this.descentDirectionBroadcaster = communicationGroup.getBroadcastReceiver(DescentDirectionBroadcaster.class);
+    this.lineSearchEvaluationsReducer = communicationGroup.getReduceSender(LineSearchEvaluationsReducer.class);
+    this.minEtaBroadcaster = communicationGroup.getBroadcastReceiver(MinEtaBroadcaster.class);
   }
 
   @Override
   public byte[] call(final byte[] memento) throws Exception {
-    boolean stopped = false;
-    while (!stopped) {
-      final ControlMessages controlMessage = controlMessageReceiver.receive();
+    boolean stop = false;
+    while (!stop) {
+      final ControlMessages controlMessage = controlMessageBroadcaster.receive();
       switch (controlMessage) {
         case Stop:
-          stopped = true;
+          stop = true;
           break;
 
         case ComputeGradientWithModel:
-          this.model = modelReceiver.receive();
+          this.model = modelBroadcaster.receive();
           lossAndGradientReducer.send(computeLossAndGradient());
+          break;
+
+        case ComputeGradientWithMinEta:
+          final double minEta = minEtaBroadcaster.receive();
+          assert (descentDirection != null);
+          this.descentDirection.scale(minEta);
+          assert (model != null);
+          this.model.add(descentDirection);
+          lossAndGradientReducer.send(computeLossAndGradient());
+          break;
+
+        case DoLineSearch:
+          this.descentDirection = descentDirectionBroadcaster.receive();
+          lineSearchEvaluationsReducer.send(lineSearchEvals());
           break;
 
         default:
@@ -92,6 +124,39 @@ public class SlaveTask implements Task {
       }
     }
     return null;
+  }
+
+  /**
+   * @param modelAndDescentDir
+   * @return
+   */
+  private Pair<Vector, Integer> lineSearchEvals() {
+    if (examples.isEmpty()) {
+      loadData();
+    }
+    final Vector zed = new DenseVector(examples.size());
+    final Vector ee = new DenseVector(examples.size());
+    for (int i = 0; i < examples.size(); i++) {
+      final Example example = examples.get(i);
+      double f = example.predict(model);
+      zed.set(i, f);
+      f = example.predict(descentDirection);
+      ee.set(i, f);
+    }
+
+    final double[] t = ts.getT();
+    final Vector evaluations = new DenseVector(t.length);
+    int i = 0;
+    for (final double d : t) {
+      double loss = 0;
+      for (int j = 0; j < examples.size(); j++) {
+        final Example example = examples.get(j);
+        final double val = zed.get(j) + d * ee.get(j);
+        loss += this.lossFunction.computeLoss(example.getLabel(), val);
+      }
+      evaluations.set(i++, loss);
+    }
+    return new Pair<>(evaluations, examples.size());
   }
 
   /**
@@ -123,7 +188,7 @@ public class SlaveTask implements Task {
     for (final Pair<LongWritable, Text> examplePair : dataSet) {
       final Example example = parser.parse(examplePair.second.toString());
       examples.add(example);
-      if (++i % 2000 == 0) {
+      if(++i % 2000 == 0) {
         LOG.info("Done parsing " + i + " lines");
       }
     }

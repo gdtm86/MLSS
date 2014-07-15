@@ -56,8 +56,7 @@ public class MasterTask implements Task {
                     @Parameter(ModelDimensions.class) final int dimensions,
                     @Parameter(Lambda.class) final double lambda,
                     @Parameter(Eta.class) final double eta,
-                    @Parameter(Iterations.class) final int maxIters,
-                    @Parameter(EnableRampup.class) final boolean rampup) {
+                    @Parameter(Iterations.class) final int maxIters) {
     this.lambda = lambda;
     this.eta = eta;
     this.maxIters = maxIters;

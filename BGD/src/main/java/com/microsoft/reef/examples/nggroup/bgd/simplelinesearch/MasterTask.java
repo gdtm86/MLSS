@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.microsoft.reef.examples.nggroup.bgd.full;
+package com.microsoft.reef.examples.nggroup.bgd.simplelinesearch;
 
 import java.util.ArrayList;
 
@@ -26,10 +26,8 @@ import com.microsoft.reef.examples.nggroup.bgd.operatornames.DescentDirectionBro
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.LineSearchEvaluationsReducer;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.LossAndGradientReducer;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.MinEtaBroadcaster;
-import com.microsoft.reef.examples.nggroup.bgd.operatornames.ModelAndDescentDirectionBroadcaster;
 import com.microsoft.reef.examples.nggroup.bgd.operatornames.ModelBroadcaster;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.AllCommunicationGroup;
-import com.microsoft.reef.examples.nggroup.bgd.parameters.EnableRampup;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.Iterations;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.Lambda;
 import com.microsoft.reef.examples.nggroup.bgd.parameters.ModelDimensions;
@@ -41,7 +39,6 @@ import com.microsoft.reef.io.Tuple;
 import com.microsoft.reef.io.network.group.operators.Broadcast;
 import com.microsoft.reef.io.network.group.operators.Reduce;
 import com.microsoft.reef.io.network.nggroup.api.CommunicationGroupClient;
-import com.microsoft.reef.io.network.nggroup.api.GroupChanges;
 import com.microsoft.reef.io.network.nggroup.api.GroupCommClient;
 import com.microsoft.reef.io.network.util.Utils.Pair;
 import com.microsoft.reef.io.serialization.Codec;
@@ -58,11 +55,9 @@ public class MasterTask implements Task {
   private final Broadcast.Sender<ControlMessages> controlMessageBroadcaster;
   private final Broadcast.Sender<Vector> modelBroadcaster;
   private final Reduce.Receiver<Pair<Pair<Double, Integer>, Vector>> lossAndGradientReducer;
-  private final Broadcast.Sender<Pair<Vector, Vector>> modelAndDescentDirectionBroadcaster;
   private final Broadcast.Sender<Vector> descentDriectionBroadcaster;
   private final Reduce.Receiver<Pair<Vector, Integer>> lineSearchEvaluationsReducer;
   private final Broadcast.Sender<Double> minEtaBroadcaster;
-  private final boolean ignoreAndContinue;
   private final com.microsoft.reef.examples.nggroup.bgd.utils.StepSizes ts;
   private final double lambda;
   private final int maxIters;
@@ -79,18 +74,15 @@ public class MasterTask implements Task {
       @Parameter(ModelDimensions.class) final int dimensions,
       @Parameter(Lambda.class) final double lambda,
       @Parameter(Iterations.class) final int maxIters,
-      @Parameter(EnableRampup.class) final boolean rampup,
       final StepSizes ts) {
     this.lambda = lambda;
     this.maxIters = maxIters;
     this.ts = ts;
-    this.ignoreAndContinue = rampup;
     this.model = new DenseVector(dimensions);
     this.communicationGroupClient = groupCommClient.getCommunicationGroup(AllCommunicationGroup.class);
     this.controlMessageBroadcaster = communicationGroupClient.getBroadcastSender(ControlMessageBroadcaster.class);
     this.modelBroadcaster = communicationGroupClient.getBroadcastSender(ModelBroadcaster.class);
     this.lossAndGradientReducer = communicationGroupClient.getReduceReceiver(LossAndGradientReducer.class);
-    this.modelAndDescentDirectionBroadcaster = communicationGroupClient.getBroadcastSender(ModelAndDescentDirectionBroadcaster.class);
     this.descentDriectionBroadcaster = communicationGroupClient.getBroadcastSender(DescentDirectionBroadcaster.class);
     this.lineSearchEvaluationsReducer = communicationGroupClient.getReduceReceiver(LineSearchEvaluationsReducer.class);
     this.minEtaBroadcaster = communicationGroupClient.getBroadcastSender(MinEtaBroadcaster.class);
@@ -131,30 +123,20 @@ public class MasterTask implements Task {
   }
 
   private Vector lineSearch(final Vector descentDirection) throws NetworkException, InterruptedException {
-    Vector lineSearchResults;
-    do {
-      try (Timer t = new Timer("LineSearch - Broadcast("
-              + (sendModel ? "ModelAndDescentDirection" : "DescentDirection") + ") + Reduce(LossEvalsInLineSearch)")) {
-        if (sendModel) {
-          System.out.println("DoLineSearchWithModel");
-          controlMessageBroadcaster.send(ControlMessages.DoLineSearchWithModel);
-          modelAndDescentDirectionBroadcaster.send(new Pair<>(model, descentDirection));
-        } else {
-          System.out.println("DoLineSearch");
-          controlMessageBroadcaster.send(ControlMessages.DoLineSearch);
-          descentDriectionBroadcaster.send(descentDirection);
-        }
-        final Pair<Vector, Integer> lineSearchEvals = lineSearchEvaluationsReducer.reduce();
-        final int numExamples = lineSearchEvals.second;
-        System.out.println("#Examples: " + numExamples);
-        lineSearchResults = lineSearchEvals.first;
-        lineSearchResults.scale(1.0/numExamples);
-        System.out.println("LineSearchEvals: " + lineSearchResults);
-      }
+    try (Timer t = new Timer("LineSearch - Broadcast(DescentDirection) + Reduce(LossEvalsInLineSearch)")) {
 
-      sendModel = chkAndUpdate();
-    } while (!ignoreAndContinue && sendModel);
-    return lineSearchResults;
+      System.out.println("DoLineSearch");
+      controlMessageBroadcaster.send(ControlMessages.DoLineSearch);
+      descentDriectionBroadcaster.send(descentDirection);
+
+      final Pair<Vector, Integer> lineSearchEvals = lineSearchEvaluationsReducer.reduce();
+      final int numExamples = lineSearchEvals.second;
+      System.out.println("#Examples: " + numExamples);
+      final Vector lineSearchResults = lineSearchEvals.first;
+      lineSearchResults.scale(1.0/numExamples);
+      System.out.println("LineSearchEvals: " + lineSearchResults);
+      return lineSearchResults;
+    }
   }
 
   /**
@@ -167,53 +149,28 @@ public class MasterTask implements Task {
    * @throws NetworkException
    */
   private Pair<Double,Vector> computeLossAndGradient() throws NetworkException, InterruptedException {
-    Pair<Double,Vector> returnValue = null;
-    do {
-      try(Timer t = new Timer("Broadcast(" + (sendModel ? "Model" : "MinEta") + ") + Reduce(LossAndGradient)")) {
-        if (sendModel) {
-          System.out.println("ComputeGradientWithModel");
-          controlMessageBroadcaster.send(ControlMessages.ComputeGradientWithModel);
-          modelBroadcaster.send(model);
-        } else {
-          System.out.println("ComputeGradientWithMinEta");
-          controlMessageBroadcaster.send(ControlMessages.ComputeGradientWithMinEta);
-          minEtaBroadcaster.send(minEta);
-        }
-        final Pair<Pair<Double, Integer>, Vector> lossAndGradient = lossAndGradientReducer.reduce();
-        final int numExamples = lossAndGradient.first.second;
-        System.out.println("#Examples: " + numExamples);
-        final double lossPerExample = lossAndGradient.first.first / numExamples;
-        System.out.println("Loss: " + lossPerExample);
-        final double objFunc = ((lambda / 2) * model.norm2Sqr()) + lossPerExample;
-        System.out.println("Objective Func Value: " + objFunc);
-        final Vector gradient = lossAndGradient.second;
-        gradient.scale(1.0/numExamples);
-        System.out.println("Gradient: " + gradient);
-        returnValue = new Pair<>(objFunc, gradient);
+    try(Timer t = new Timer("Broadcast(" + (sendModel ? "Model" : "MinEta") + ") + Reduce(LossAndGradient)")) {
+      if (sendModel) {
+        System.out.println("ComputeGradientWithModel");
+        controlMessageBroadcaster.send(ControlMessages.ComputeGradientWithModel);
+        modelBroadcaster.send(model);
+        sendModel = false;
+      } else {
+        System.out.println("ComputeGradientWithMinEta");
+        controlMessageBroadcaster.send(ControlMessages.ComputeGradientWithMinEta);
+        minEtaBroadcaster.send(minEta);
       }
-      sendModel = chkAndUpdate();
-    } while (!ignoreAndContinue && sendModel);
-    return returnValue;
-  }
-
-  /**
-   * @return
-   */
-  private boolean chkAndUpdate() {
-    long t1 = System.currentTimeMillis();
-    final GroupChanges changes = communicationGroupClient.getTopologyChanges();
-    long t2 = System.currentTimeMillis();
-    System.out.println("Time to get TopologyChanges = " + (t2 - t1) / 1000.0 + " sec");
-    if (changes.exist()) {
-      System.out.println("There exist topology changes. Asking to update Topology");
-      t1 = System.currentTimeMillis();
-      communicationGroupClient.updateTopology();
-      t2 = System.currentTimeMillis();
-      System.out.println("Time to get TopologyUpdated = " + (t2 - t1) / 1000.0 + " sec");
-      return true;
-    } else {
-      System.out.println("No changes in topology exist. So not updating topology");
-      return false;
+      final Pair<Pair<Double, Integer>, Vector> lossAndGradient = lossAndGradientReducer.reduce();
+      final int numExamples = lossAndGradient.first.second;
+      System.out.println("#Examples: " + numExamples);
+      final double lossPerExample = lossAndGradient.first.first / numExamples;
+      System.out.println("Loss: " + lossPerExample);
+      final double objFunc = ((lambda / 2) * model.norm2Sqr()) + lossPerExample;
+      System.out.println("Objective Func Value: " + objFunc);
+      final Vector gradient = lossAndGradient.second;
+      gradient.scale(1.0/numExamples);
+      System.out.println("Gradient: " + gradient);
+      return new Pair<>(objFunc, gradient);
     }
   }
 

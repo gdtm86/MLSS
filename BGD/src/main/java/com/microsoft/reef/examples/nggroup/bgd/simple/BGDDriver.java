@@ -63,7 +63,6 @@ public class BGDDriver {
   private static final Logger LOG = Logger.getLogger(BGDDriver.class.getName());
   private static final String MASTER_TASK = "MasterTask";
 
-
   private final DataLoadingService dataLoadingService;
   private final GroupCommDriver groupCommDriver;
   private final CommunicationGroupDriver communicationsGroup;
@@ -116,7 +115,6 @@ public class BGDDriver {
 
   final class ContextActiveHandler implements EventHandler<ActiveContext> {
 
-
     @Override
     public void onNext(final ActiveContext activeContext) {
       LOG.info("Got active context-" + activeContext.getId());
@@ -140,6 +138,7 @@ public class BGDDriver {
         communicationsGroupMasterContextId = contextId;
       }
       final Configuration serviceConfiguration = groupCommDriver.getServiceConf();
+      LOG.info("Submitting GCContext & Service configuration");
       activeContext.submitContextAndService(contextConfiguration, serviceConfiguration);
     }
 
@@ -191,6 +190,7 @@ public class BGDDriver {
           System.out.println(loss);
         }
       }
+      LOG.info("Closing active context");
       task.getActiveContext().close();
     }
 
