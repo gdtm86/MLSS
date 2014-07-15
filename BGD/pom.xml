@@ -15,7 +15,7 @@
 
 
     <groupId>com.microsoft.cisl</groupId>
-    <artifactId>SimpleBGD</artifactId>
+    <artifactId>BGD</artifactId>
     <version>1.0-SNAPSHOT</version>
 
     <organization>
